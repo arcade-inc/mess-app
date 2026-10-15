@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { after, test } from 'node:test'
 import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics'
 import type { FastifyInstance } from 'fastify'
+import type { Pool } from 'pg'
 
 const appModule = await import('../../src/app.js').catch(() => null)
 const telemetryModule = await import('../../src/platform/telemetry.js').catch(() => null)
@@ -67,6 +68,31 @@ test('creates an OpenTelemetry request context for registered routes', async (t)
   const response = await app.inject({ url: '/test/traced' })
   assert.equal(response.statusCode, 200)
   assert.equal(response.json().instrumented, true)
+})
+
+test('a read-only pool cannot satisfy readiness or register write and identity routes', async (t) => {
+  assert.ok(appModule)
+  const queries: string[] = []
+  const readOnlyPool = {
+    query: async (sql: string) => {
+      queries.push(sql)
+      return { rows: [], rowCount: 0 }
+    },
+    end: async () => undefined,
+  } as unknown as Pool
+  const app = await appModule.buildApp({
+    config: testConfig(),
+    readDatabase: readOnlyPool,
+  })
+  t.after(() => app.close())
+
+  const readiness = await app.inject({ method: 'GET', url: '/ready' })
+  assert.equal(readiness.statusCode, 503)
+  const catalog = await app.inject({ method: 'GET', url: '/courses' })
+  assert.equal(catalog.statusCode, 200)
+  assert.match(queries[0] ?? '', /FROM courses/i)
+  assert.equal((await app.inject({ method: 'POST', url: '/checkout', payload: {} })).statusCode, 401)
+  assert.equal((await app.inject({ method: 'GET', url: '/me/enrollments' })).statusCode, 401)
 })
 
 test('limits requests independently by verified student and replenishes after the window', async (t) => {

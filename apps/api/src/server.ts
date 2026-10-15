@@ -5,13 +5,12 @@ import { shutdownTelemetry, startTelemetry } from './platform/telemetry.js'
 async function start(): Promise<void> {
   const config = parseConfig()
   const { instrumentation, telemetry } = await startTelemetry(config)
-  const [{ buildApp }, { createDatabase }] = await Promise.all([
+  const [{ buildApp }, { createDatabasePools }] = await Promise.all([
     import('./app.js'),
     import('./platform/database.js'),
   ])
-  const database = createDatabase(config.databaseUrl)
-  const readDatabase = createDatabase(config.databaseReadUrl)
-  const app = await buildApp({ config, database, readDatabase, telemetry, instrumentation })
+  const databases = createDatabasePools(config.databaseUrl, config.databaseReadUrl)
+  const app = await buildApp({ config, database: databases.primary, readDatabase: databases.read, telemetry, instrumentation })
 
   app.addHook('onClose', async () => {
     await shutdownTelemetry()

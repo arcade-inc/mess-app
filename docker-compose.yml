@@ -1,0 +1,92 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mes}
+      POSTGRES_USER: ${POSTGRES_USER:-mes}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-only-change-me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["npm", "run", "migrate", "--workspace", "@mes/api"]
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      DATABASE_URL: postgres://${POSTGRES_USER:-mes}:${POSTGRES_PASSWORD:-local-only-change-me}@db:5432/${POSTGRES_DB:-mes}
+      DATABASE_READ_URL: postgres://${POSTGRES_USER:-mes}:${POSTGRES_PASSWORD:-local-only-change-me}@db:5432/${POSTGRES_DB:-mes}
+      JWT_SECRET: ${JWT_SECRET:-local-development-only-replace-with-a-random-secret}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      API_HOST: 0.0.0.0
+      API_PORT: 3000
+      DATABASE_URL: postgres://${POSTGRES_USER:-mes}:${POSTGRES_PASSWORD:-local-only-change-me}@db:5432/${POSTGRES_DB:-mes}
+      DATABASE_READ_URL: postgres://${POSTGRES_USER:-mes}:${POSTGRES_PASSWORD:-local-only-change-me}@db:5432/${POSTGRES_DB:-mes}
+      JWT_SECRET: ${JWT_SECRET:-local-development-only-replace-with-a-random-secret}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-mes-api}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-100}
+      RATE_LIMIT_TIME_WINDOW: ${RATE_LIMIT_TIME_WINDOW:-60000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:8080}
+      TRUST_PROXY: ${TRUST_PROXY:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["npm", "run", "worker", "--workspace", "@mes/api"]
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      DATABASE_URL: postgres://${POSTGRES_USER:-mes}:${POSTGRES_PASSWORD:-local-only-change-me}@db:5432/${POSTGRES_DB:-mes}
+      DATABASE_READ_URL: postgres://${POSTGRES_USER:-mes}:${POSTGRES_PASSWORD:-local-only-change-me}@db:5432/${POSTGRES_DB:-mes}
+      JWT_SECRET: ${JWT_SECRET:-local-development-only-replace-with-a-random-secret}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:8080}
+      OTEL_SERVICE_NAME: ${OTEL_WORKER_SERVICE_NAME:-mes-outbox-worker}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

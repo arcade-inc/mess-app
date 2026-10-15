@@ -13,6 +13,16 @@ export function shouldPropagateTraceContext(url: string, apiOrigins: string[]): 
   }
 }
 
+export function redactTelemetryUrl(value: string): string {
+  try {
+    const url = new URL(value)
+    const path = url.pathname.replace(/(^|\/)(api\/)?invitations\/[^/]+(?=\/|$)/, (_match, prefix: string, apiPrefix = '') => `${prefix}${apiPrefix}invitations/:token`)
+    return `${url.origin}${path}`
+  } catch {
+    return '[redacted-url]'
+  }
+}
+
 export function startBrowserTelemetry(apiOrigins: string[], exporterEndpoint?: string): void {
   const spanProcessors = exporterEndpoint
     ? [new SimpleSpanProcessor(new OTLPTraceExporter({ url: `${exporterEndpoint.replace(/\/$/, '')}/v1/traces` }))]
@@ -20,7 +30,15 @@ export function startBrowserTelemetry(apiOrigins: string[], exporterEndpoint?: s
   const provider = new WebTracerProvider({ spanProcessors })
   provider.register({ propagator: new W3CTraceContextPropagator() })
   const escapedOrigins = apiOrigins.map((origin) => origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  new FetchInstrumentation({ propagateTraceHeaderCorsUrls: escapedOrigins.map((origin) => new RegExp(`^${origin}(?:/|$)`)) }).enable()
+  new FetchInstrumentation({
+    propagateTraceHeaderCorsUrls: escapedOrigins.map((origin) => new RegExp(`^${origin}(?:/|$)`)),
+    requestHook(span, request) {
+      if (request instanceof Request) span.setAttribute('url.full', redactTelemetryUrl(request.url))
+    },
+    applyCustomAttributesOnSpan(span, request) {
+      if (request instanceof Request) span.setAttribute('url.full', redactTelemetryUrl(request.url))
+    },
+  }).enable()
 }
 
 export function activeTraceCorrelation(): { traceId?: string; spanId?: string } {

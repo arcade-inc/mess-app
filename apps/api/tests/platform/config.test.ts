@@ -36,3 +36,15 @@ test('accepts a separately configured PostgreSQL read target', () => {
   })
   assert.equal(config.databaseReadUrl, 'postgres://reader:secret@replica.example:5432/mes')
 })
+
+test('defaults invitation links to the first explicitly configured web origin', () => {
+  const config = parseConfig({ ...baseEnvironment, CORS_ORIGINS: 'https://web.example,https://admin.example' })
+  assert.equal(config.webOrigin, 'https://web.example')
+})
+
+test('accepts only an explicit HTTP(S) web origin for checkout invitation links', () => {
+  const config = parseConfig({ ...baseEnvironment, CORS_ORIGINS: 'https://learn.example', WEB_ORIGIN: 'https://learn.example' })
+  assert.equal(config.webOrigin, 'https://learn.example')
+  assert.throws(() => parseConfig({ ...baseEnvironment, WEB_ORIGIN: 'https://learn.example/path' }))
+  assert.throws(() => parseConfig({ ...baseEnvironment, WEB_ORIGIN: 'https://other.example' }))
+})

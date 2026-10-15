@@ -13,6 +13,7 @@ const environmentSchema = z.object({
   RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(1_000_000).default(100),
   RATE_LIMIT_TIME_WINDOW: z.coerce.number().int().min(100).max(86_400_000).default(60_000),
   CORS_ORIGINS: z.string().default('http://localhost:5173,http://localhost:8080'),
+  WEB_ORIGIN: z.union([z.literal(''), z.string().url()]).default(''),
   TRUST_PROXY: z.string().default(''),
 })
 
@@ -28,6 +29,7 @@ export interface AppConfig {
   rateLimitMax: number
   rateLimitTimeWindowMs: number
   corsOrigins: string[]
+  webOrigin: string
   trustedProxies: string[]
 }
 
@@ -58,6 +60,13 @@ export function parseConfig(environment: NodeJS.ProcessEnv = process.env): AppCo
       throw new Error(`CORS_ORIGINS entries must be explicit HTTP(S) origins: ${origin}`)
     }
   }
+  const webOrigin = parsed.WEB_ORIGIN || corsOrigins[0]
+  if (!webOrigin) throw new Error('WEB_ORIGIN or at least one CORS_ORIGINS entry is required')
+  const parsedWebOrigin = new URL(webOrigin)
+  if (parsedWebOrigin.origin !== webOrigin || !['http:', 'https:'].includes(parsedWebOrigin.protocol)) {
+    throw new Error('WEB_ORIGIN must be an explicit HTTP(S) origin')
+  }
+  if (!corsOrigins.includes(webOrigin)) throw new Error('WEB_ORIGIN must also appear in CORS_ORIGINS')
 
   return {
     environment: parsed.NODE_ENV,
@@ -71,6 +80,7 @@ export function parseConfig(environment: NodeJS.ProcessEnv = process.env): AppCo
     rateLimitMax: parsed.RATE_LIMIT_MAX,
     rateLimitTimeWindowMs: parsed.RATE_LIMIT_TIME_WINDOW,
     corsOrigins,
+    webOrigin,
     trustedProxies: parseTrustedProxies(parsed.TRUST_PROXY),
   }
 }

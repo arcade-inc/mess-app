@@ -11,7 +11,13 @@ import { registerCors } from './platform/cors.js'
 import { registerErrorHandler } from './platform/errors.js'
 import { createLoggerOptions } from './platform/logger.js'
 import { registerRateLimit } from './platform/rate-limit.js'
+import { selectDatabasePool } from './platform/database.js'
 import { createTelemetry, type Telemetry } from './platform/telemetry.js'
+import { registerCatalogRoutes } from './modules/catalog/catalog.routes.js'
+import { registerCheckoutRoutes } from './modules/commerce/checkout.routes.js'
+import type { PaymentGateway } from './modules/commerce/payment-gateway.js'
+import { registerIdentityRoutes } from './modules/identity/identity.routes.js'
+import { registerLearningRoutes } from './modules/learning/learning.routes.js'
 
 interface BuildAppOptions {
   config: AppConfig
@@ -19,9 +25,12 @@ interface BuildAppOptions {
   readDatabase?: Pool
   telemetry?: Telemetry
   instrumentation?: FastifyOtelInstrumentation
+  paymentGateway?: PaymentGateway
 }
 
-export async function buildApp({ config, database, readDatabase, telemetry = createTelemetry(), instrumentation }: BuildAppOptions): Promise<FastifyInstance> {
+export async function buildApp({ config, database, readDatabase, telemetry = createTelemetry(), instrumentation, paymentGateway }: BuildAppOptions): Promise<FastifyInstance> {
+  const readPool = readDatabase ?? database
+  const pools = database ? { primary: database, read: readDatabase ?? database } : undefined
   const app = Fastify({
     logger: createLoggerOptions(config),
     trustProxy: config.trustedProxies.length > 0 ? config.trustedProxies : false,
@@ -60,14 +69,32 @@ export async function buildApp({ config, database, readDatabase, telemetry = cre
 
   app.get('/health', { config: { public: true } }, async () => ({ status: 'ok' }))
   app.get('/ready', { config: { public: true } }, async (_request, reply) => {
-    if (!database) return reply.code(503).send({ status: 'not_ready' })
+    if (!database || !pools) return reply.code(503).send({ status: 'not_ready' })
     try {
-      await database.query('SELECT 1')
+      await selectDatabasePool(pools, 'read-after-write').query('SELECT 1')
       return { status: 'ready' }
     } catch {
       return reply.code(503).send({ status: 'not_ready' })
     }
   })
+
+  if (readPool) registerCatalogRoutes(app, pools ? selectDatabasePool(pools, 'catalog-browse') : readPool)
+  if (pools) registerCheckoutRoutes(app, {
+    primary: selectDatabasePool(pools, 'checkout-consistency'),
+    webOrigin: config.webOrigin,
+    telemetry,
+    ...(paymentGateway ? { paymentGateway } : {}),
+  })
+  if (pools) {
+    const primary = selectDatabasePool(pools, 'transaction')
+    registerIdentityRoutes(app, { database: primary, config, telemetry })
+    registerLearningRoutes(
+      app,
+      selectDatabasePool(pools, 'enrollment-authorization'),
+      selectDatabasePool(pools, 'lesson-content-lag-tolerant'),
+      telemetry,
+    )
+  }
 
   if (database || readDatabase) app.addHook('onClose', async () => {
     await Promise.all(Array.from(new Set([database, readDatabase].filter((pool): pool is Pool => pool !== undefined)), (pool) => pool.end()))

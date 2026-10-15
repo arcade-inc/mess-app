@@ -1,0 +1,20 @@
+{
+  "name": "mes-mock-journey",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace @mes/web",
+    "dev:api": "npm run dev --workspace @mes/api",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "eslint . --max-warnings=0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.12.0",
+    "globals": "^17.13.0",
+    "typescript-eslint": "^8.71.1"
+  }
+}

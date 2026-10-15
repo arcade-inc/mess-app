@@ -7,8 +7,9 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
+    "worker": "node dist/worker/runner.js",
     "lint": "eslint src tests --max-warnings=0",
-    "test": "node --import tsx --test tests/**/*.test.ts",
+    "test": "node --import tsx --test --test-concurrency=1 tests/**/*.test.ts",
     "migrate": "tsx src/platform/migrate.ts"
   },
   "dependencies": {
