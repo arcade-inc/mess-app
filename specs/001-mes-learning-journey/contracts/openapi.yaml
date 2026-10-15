@@ -1,0 +1,376 @@
+openapi: 3.1.0
+info:
+  title: MES Mock Learning Journey API
+  version: 1.0.0
+  description: >-
+    User-facing API contract for course purchase, student activation, existing-account course linking, and entitlement-gated learning.
+    All routes require a verified student session except the explicit public allowlist: GET /courses,
+    POST /checkout, GET/POST /invitations/{token}, POST /invitations/{token}/claim, POST /auth/login, and health/readiness. Per-user
+    request limits are enforced over a configured time window; throttled requests return 429. CORS
+    is restricted to explicitly configured origins. Browser clients may send W3C Trace Context
+    `traceparent` and optional `tracestate` headers from approved origins; these headers are
+    diagnostic context only and never authenticate or authorize a request. Invalid or missing
+    trace context starts a new server trace. CORS preflight allows trace headers only for the
+    configured web origins.
+servers:
+  - url: /api
+security: []
+paths:
+  /courses:
+    get:
+      summary: List purchasable courses
+      responses:
+        '200':
+          description: Course catalog with eligibility and server-defined prices
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [courses]
+                properties:
+                  courses:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Course'
+  /checkout:
+    post:
+      summary: Create or retrieve a mock purchase
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [parent, students]
+              properties:
+                parent:
+                  type: object
+                  required: [name, email, emailConfirm]
+                  properties:
+                    name: { type: string }
+                    email: { type: string, format: email }
+                    emailConfirm: { type: string, format: email }
+                students:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [name, year, courseIds]
+                    properties:
+                      name: { type: string }
+                      year: { type: integer, minimum: 5, maximum: 13 }
+                      courseIds:
+                        type: array
+                        minItems: 1
+                        items: { type: string }
+      responses:
+        '201':
+          description: Mock purchase confirmed; invitation paths are returned for display once
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [orderId, status, totalMinor, currency, invitations]
+                properties:
+                  orderId: { type: string }
+                  status: { type: string, enum: [PAID] }
+                  totalMinor: { type: integer, minimum: 0 }
+                  currency: { type: string, minLength: 3, maxLength: 3 }
+                  invitations:
+                    type: array
+                    items:
+                      type: object
+                      required: [studentName, url]
+                      properties:
+                        studentName: { type: string }
+                        url: { type: string, format: uri }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409':
+          description: A request with this key is currently processing; retry with the same key and body
+        '422':
+          description: Business validation failed or the idempotency key was previously used with a different request
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /invitations/{token}:
+    get:
+      summary: Read invitation status and onboarding details
+      parameters:
+        - $ref: '#/components/parameters/InvitationToken'
+      responses:
+        '200':
+          description: Invitation is active and may be used for onboarding
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [valid, studentName, courses]
+                properties:
+                  valid: { type: boolean, const: true }
+                  studentName: { type: string }
+                  courses:
+                    type: array
+                    items: { $ref: '#/components/schemas/CourseSummary' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    post:
+      summary: Redeem invitation and activate student account
+      parameters:
+        - $ref: '#/components/parameters/InvitationToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 12 }
+      responses:
+        '200':
+          description: Student activated and authenticated; session is set in a secure cookie
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: HttpOnly, SameSite session cookie; never expose the credential to script
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [student]
+                properties:
+                  student: { $ref: '#/components/schemas/StudentSummary' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /invitations/{token}/claim:
+    post:
+      summary: Automatically link a purchased invitation to the authenticated student
+      description: >-
+        The browser submits this operation automatically when an authenticated student opens an
+        invitation or returns to it after sign-in. The invitation bearer token remains in the URL;
+        it is not stored in a cookie. The server identifies the student from the session and compares
+        learner names ignoring case and repeated whitespace; school year is not compared. A name
+        mismatch leaves the invitation and course access unchanged.
+      security: [{ studentSession: [] }]
+      parameters:
+        - $ref: '#/components/parameters/InvitationToken'
+      responses:
+        '200':
+          description: Invitation claimed and its purchased courses linked to the authenticated student
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [student]
+                properties:
+                  student: { $ref: '#/components/schemas/StudentSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Invitation learner name does not match the authenticated student name
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: INVITATION_LEARNER_MISMATCH
+                  message: This course belongs to another learner.
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/login:
+    post:
+      summary: Authenticate an existing student
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          description: Authenticated; session is set in a secure cookie
+          headers:
+            Set-Cookie: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  student: { $ref: '#/components/schemas/StudentSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/logout:
+    post:
+      summary: End the current student session
+      security: [{ studentSession: [] }]
+      responses:
+        '204': { description: Session ended and cookie cleared }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /me:
+    get:
+      summary: Return the current student
+      security: [{ studentSession: [] }]
+      responses:
+        '200':
+          description: Authenticated student profile summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StudentSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /me/enrollments:
+    get:
+      summary: List active courses for the current student
+      security: [{ studentSession: [] }]
+      responses:
+        '200':
+          description: Current student's active enrollments and course summaries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enrollments:
+                    type: array
+                    items: { $ref: '#/components/schemas/EnrollmentSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /courses/{courseId}/lessons:
+    get:
+      summary: List lessons for an actively enrolled course
+      security: [{ studentSession: [] }]
+      parameters:
+        - name: courseId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Lesson summaries for an entitled course
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  lessons:
+                    type: array
+                    items: { $ref: '#/components/schemas/LessonSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /lessons/{lessonId}:
+    get:
+      summary: Read lesson content for an actively enrolled course
+      security: [{ studentSession: [] }]
+      parameters:
+        - name: lessonId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Lesson content available to the current student
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/LessonSummary'
+                  - type: object
+                    required: [body]
+                    properties:
+                      body: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /health:
+    get:
+      summary: Liveness check
+      responses:
+        '200': { description: Service process is live }
+  /ready:
+    get:
+      summary: Readiness check
+      responses:
+        '200': { description: Service can serve requests and database is available }
+        '503': { description: Required dependency unavailable }
+components:
+  securitySchemes:
+    studentSession:
+      type: apiKey
+      in: cookie
+      name: session
+  parameters:
+    InvitationToken:
+      name: token
+      in: path
+      required: true
+      schema: { type: string }
+  schemas:
+    Course:
+      allOf:
+        - $ref: '#/components/schemas/CourseSummary'
+        - type: object
+          required: [yearMin, yearMax, priceMinor, currency]
+          properties:
+            yearMin: { type: integer }
+            yearMax: { type: integer }
+            priceMinor: { type: integer, minimum: 0 }
+            currency: { type: string, minLength: 3, maxLength: 3 }
+    CourseSummary:
+      type: object
+      required: [id, subject]
+      properties:
+        id: { type: string }
+        subject: { type: string }
+    StudentSummary:
+      type: object
+      required: [id, name, email, year]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string, format: email }
+        year: { type: integer }
+    EnrollmentSummary:
+      type: object
+      required: [id, status, course]
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [ACTIVE] }
+        course: { $ref: '#/components/schemas/CourseSummary' }
+    LessonSummary:
+      type: object
+      required: [id, courseId, position, title]
+      properties:
+        id: { type: string }
+        courseId: { type: string }
+        position: { type: integer }
+        title: { type: string }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            requestId: { type: string }
+  responses:
+    BadRequest:
+      description: Request is malformed or missing required values
+    Conflict:
+      description: Request conflicts with an existing account, idempotency record, or resource state
+    Unprocessable:
+      description: Validly formed request violates business validation, such as year eligibility
+    Unauthorized:
+      description: Student authentication is required or credentials are invalid
+    NotFound:
+      description: Invitation or protected resource is unavailable; response does not disclose existence
+    RateLimited:
+      description: Request limit for this user and time window has been reached; retry after the advertised reset interval

@@ -1,0 +1,92 @@
+openapi: 3.1.0
+info:
+  title: MES Existing Account Course Claim
+  version: 1.0.0
+  description: Contract addition for automatically claiming a paid invitation into the authenticated learner account when its link is opened or resumed after sign-in.
+servers:
+  - url: /api
+paths:
+  /invitations/{token}/claim:
+    post:
+      summary: Claim an invitation for the authenticated learner
+      description: >-
+        Requires the existing student session and the invitation token in the URL. The invitation
+        token is not stored in a cookie; the existing session cookie is used only for authentication.
+        The learner name on the invitation must match the authenticated account name after trimming,
+        collapsing repeated whitespace, and ignoring case. School year is not compared. A successful
+        claim consumes the invitation and activates all pending course access in its student slot as
+        one operation. Opening the link while authenticated or returning to it after login
+        automatically submits the claim. Ordinary login without an invitation does not claim one.
+      security:
+        - studentSession: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: Single-use invitation bearer token carried in the URL; never store it in a cookie or include it in logs or telemetry.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Invitation claimed and course access linked to the authenticated learner
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [student]
+                properties:
+                  student:
+                    $ref: '#/components/schemas/StudentSummary'
+        '401':
+          description: A verified student session is required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Invitation is invalid, expired, superseded, already used, or unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Invitation learner name does not match the authenticated account name
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: INVITATION_LEARNER_MISMATCH
+                  message: This course belongs to another learner.
+        '429':
+          description: Request limit for this user and time window has been reached
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  securitySchemes:
+    studentSession:
+      type: apiKey
+      in: cookie
+      name: session
+  schemas:
+    StudentSummary:
+      type: object
+      required: [id, name, email, year]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string, format: email }
+        year: { type: integer }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }

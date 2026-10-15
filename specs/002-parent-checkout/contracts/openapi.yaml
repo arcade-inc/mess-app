@@ -1,0 +1,79 @@
+openapi: 3.1.0
+info:
+  title: MES Parent Checkout Extension
+  version: 1.0.0
+  description: >-
+    Contract delta for the existing POST /api/checkout operation. All listed payment methods are
+    simulated labels only; no card credentials are accepted and no real payment is initiated.
+servers:
+  - url: /api
+paths:
+  /checkout:
+    post:
+      summary: Create or retrieve a mock purchase using a selected mock payment label
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 255
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [parent, students, paymentMethod]
+              properties:
+                parent:
+                  type: object
+                  required: [name, email, emailConfirm]
+                  properties:
+                    name: { type: string, minLength: 1, maxLength: 200 }
+                    email: { type: string, format: email, maxLength: 320 }
+                    emailConfirm: { type: string, format: email, maxLength: 320 }
+                students:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [name, year, courseIds]
+                    properties:
+                      name: { type: string, minLength: 1, maxLength: 200 }
+                      year: { type: integer, minimum: 5, maximum: 13 }
+                      courseIds:
+                        type: array
+                        minItems: 1
+                        items: { type: string, format: uuid }
+                paymentMethod:
+                  type: string
+                  enum: [visa, mastercard, apple_pay]
+                  description: Mock choice only; no payment credentials are accepted.
+      responses:
+        '201':
+          description: Mock purchase succeeded; invitation links are returned for immediate display once
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [orderId, status, totalMinor, currency, invitations]
+                properties:
+                  orderId: { type: string, format: uuid }
+                  status: { type: string, const: PAID }
+                  totalMinor: { type: integer, minimum: 0 }
+                  currency: { type: string, minLength: 3, maxLength: 3 }
+                  invitations:
+                    type: array
+                    items:
+                      type: object
+                      required: [studentName, url]
+                      properties:
+                        studentName: { type: string }
+                        url: { type: string, format: uri }
+        '400': { description: Malformed request or missing required values }
+        '402': { description: Mock payment failed; no invitations or access grants were issued }
+        '409': { description: A request with this key is currently processing; retry with the same key and body }
+        '422': { description: Business validation failed or key was reused with different request details }
+        '429': { description: Request limit for this user and time window was reached }
