@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from 'react'
 import { trace } from '@opentelemetry/api'
+import { getCurrentStudent } from '../api/identity.js'
 import {
   createCheckoutIdempotencyKey,
   CheckoutApiError,
@@ -9,6 +10,7 @@ import {
   type CheckoutPayload,
   type CheckoutResponse,
   type CheckoutStudentInput,
+  type MockPaymentMethod,
 } from '../api/checkout.js'
 
 interface StudentForm {
@@ -33,6 +35,8 @@ export default function CheckoutPage({ apiOrigin }: CheckoutPageProps) {
   const [parentEmail, setParentEmail] = useState('')
   const [emailConfirm, setEmailConfirm] = useState('')
   const [students, setStudents] = useState<StudentForm[]>([initialStudent()])
+  const [step, setStep] = useState<'details' | 'payment'>('details')
+  const [paymentMethod, setPaymentMethod] = useState<MockPaymentMethod | null>(null)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
@@ -66,25 +70,36 @@ export default function CheckoutPage({ apiOrigin }: CheckoutPageProps) {
     updateStudent(studentIndex, { courseIds })
   }
 
-  function buildPayload(): CheckoutPayload {
+  function buildPayload(method: MockPaymentMethod): CheckoutPayload {
     return {
       parent: { name: parentName.trim(), email: parentEmail.trim(), emailConfirm: emailConfirm.trim() },
       students: students.map((student): CheckoutStudentInput => ({ name: student.name.trim(), year: student.year, courseIds: student.courseIds })),
+      paymentMethod: method,
     }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError('')
-    const payload = buildPayload()
-    if (payload.parent.email.toLowerCase() !== payload.parent.emailConfirm.toLowerCase()) {
-      setError('Those email addresses do not match. Check them and try again.')
+    if (step === 'details') {
+      if (parentEmail.trim().toLowerCase() !== emailConfirm.trim().toLowerCase()) {
+        setError('Those email addresses do not match. Check them and try again.')
+        return
+      }
+      if (students.some((student) => !student.name.trim() || student.courseIds.length === 0)) {
+        setError('Add each learner’s name and choose at least one course.')
+        return
+      }
+      setStep('payment')
       return
     }
-    if (payload.students.some((student) => !student.name || student.courseIds.length === 0)) {
-      setError('Add each learner’s name and choose at least one course.')
+
+    if (!paymentMethod) {
+      setError('Choose a mock payment method to continue.')
       return
     }
+
+    const payload = buildPayload(paymentMethod)
     const fingerprint = JSON.stringify(payload)
     if (!attempt.current || attempt.current.fingerprint !== fingerprint) {
       attempt.current = { fingerprint, key: createCheckoutIdempotencyKey() }
@@ -112,11 +127,15 @@ export default function CheckoutPage({ apiOrigin }: CheckoutPageProps) {
     return (
       <main className="min-h-screen bg-[#edf3f1] px-5 py-8 text-[#173c3d] sm:px-8">
         <div className="mx-auto max-w-3xl">
-          <BrandHeader />
+          <BrandHeader apiOrigin={apiOrigin} />
           <section className="mt-16 rounded-[2rem] border border-[#cbdad4] bg-[#fffefa] p-7 shadow-[0_24px_70px_-50px_#173c3d] sm:p-12" aria-live="polite">
             <p className="text-xs font-bold uppercase tracking-[0.24em] text-[#527775]">Mock purchase confirmed</p>
             <h1 className="mt-4 font-display text-4xl font-semibold tracking-[-0.045em] sm:text-5xl">A new chapter starts here.</h1>
             <p className="mt-4 max-w-xl text-base leading-7 text-[#526a69]">Order <span className="font-mono text-sm">{receipt.orderId}</span> is confirmed. No payment was taken.</p>
+            <div className="mt-6 rounded-2xl border border-[#cbdad4] bg-[#edf3f1] p-5" role="status">
+              <p className="font-semibold leading-6">Your course details and student activation links were sent to {parentEmail.trim()} (simulated).</p>
+              <p className="mt-2 text-sm leading-6 text-[#526a69]">Activate each student account within 7 days.</p>
+            </div>
             <div className="mt-8 flex items-center justify-between border-y border-[#dce5e1] py-5">
               <span className="text-sm font-semibold">Order total</span>
               <span className="font-display text-2xl font-semibold">{formatPrice(receipt.totalMinor, receipt.currency)}</span>
@@ -142,7 +161,7 @@ export default function CheckoutPage({ apiOrigin }: CheckoutPageProps) {
   return (
     <main className="min-h-screen bg-[#edf3f1] px-4 py-5 text-[#173c3d] sm:px-8 sm:py-8">
       <div className="mx-auto max-w-6xl">
-        <BrandHeader />
+        <BrandHeader apiOrigin={apiOrigin} />
         <section className="relative mt-9 overflow-hidden rounded-[2rem] bg-[#173c3d] px-6 py-9 text-[#fffefa] sm:px-10 sm:py-12">
           <div className="absolute -right-14 -top-24 h-64 w-64 rounded-full border-[1px] border-[#d5e77d]/40 sm:right-12 sm:top-[-8rem] sm:h-[27rem] sm:w-[27rem]" />
           <div className="absolute -right-2 -top-12 h-48 w-48 rounded-full border-[1px] border-[#d5e77d]/30 sm:right-24 sm:top-[-6rem] sm:h-[21rem] sm:w-[21rem]" />
@@ -159,7 +178,9 @@ export default function CheckoutPage({ apiOrigin }: CheckoutPageProps) {
 
         {catalogError && <div role="alert" className="mt-6 rounded-xl border border-[#c75e3c]/40 bg-[#fff2e9] p-4 text-sm text-[#793a28]">{catalogError} Refresh to try again.</div>}
         {loading ? <p className="py-16 text-center text-sm text-[#526a69]">Loading courses…</p> : (
-          <form className="mt-8 grid gap-7 lg:grid-cols-[minmax(0,1fr)_19rem]" onSubmit={handleSubmit}>
+          <form className="mt-8" onSubmit={handleSubmit}>
+            {step === 'details' ? (
+              <div className="grid gap-7 lg:grid-cols-[minmax(0,1fr)_19rem]">
             <div className="space-y-7">
               <section className="rounded-[1.75rem] border border-[#cbdad4] bg-[#fffefa] p-5 sm:p-8">
                 <div className="flex items-end justify-between gap-4 border-b border-[#dce5e1] pb-5">
@@ -196,12 +217,25 @@ export default function CheckoutPage({ apiOrigin }: CheckoutPageProps) {
               </section>
 
               <section className="rounded-[1.75rem] border border-[#cbdad4] bg-[#fffefa] p-5 sm:p-8">
-                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#527775]">Purchase details</p>
-                <h2 className="mt-2 font-display text-2xl font-semibold tracking-[-0.035em]">Who’s placing the order?</h2>
+                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#527775]">Parent or guardian</p>
+                <h2 className="mt-2 font-display text-2xl font-semibold tracking-[-0.035em]">Parent or guardian contact</h2>
                 <div className="mt-6 grid gap-4 sm:grid-cols-2">
                   <label className="text-xs font-bold text-[#315a58] sm:col-span-2">Parent or guardian name
                     <input required maxLength={200} autoComplete="name" value={parentName} onChange={(event) => setParentName(event.target.value)} className="mt-2 block w-full rounded-xl border border-[#cbdad4] bg-white px-4 py-3 text-sm font-normal text-[#173c3d] outline-none transition placeholder:text-[#9aa9a4] focus:border-[#315a58] focus:ring-2 focus:ring-[#d5e77d]" placeholder="Your name" />
                   </label>
+                  <label className="text-xs font-bold text-[#315a58]">Email address
+                    <input required type="email" maxLength={320} autoComplete="email" value={parentEmail} onChange={(event) => setParentEmail(event.target.value)} className="mt-2 block w-full rounded-xl border border-[#cbdad4] bg-white px-4 py-3 text-sm font-normal text-[#173c3d] outline-none transition placeholder:text-[#9aa9a4] focus:border-[#315a58] focus:ring-2 focus:ring-[#d5e77d]" placeholder="you@example.com" />
+                  </label>
+                  <label className="text-xs font-bold text-[#315a58]">Confirm email address
+                    <input required type="email" maxLength={320} autoComplete="email" value={emailConfirm} onChange={(event) => setEmailConfirm(event.target.value)} className="mt-2 block w-full rounded-xl border border-[#cbdad4] bg-white px-4 py-3 text-sm font-normal text-[#173c3d] outline-none transition placeholder:text-[#9aa9a4] focus:border-[#315a58] focus:ring-2 focus:ring-[#d5e77d]" placeholder="Type it again" />
+                  </label>
+                </div>
+              </section>
+
+              <section className="rounded-[1.75rem] border border-[#cbdad4] bg-[#fffefa] p-5 sm:p-8">
+                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#527775]">Learners</p>
+                <h2 className="mt-2 font-display text-2xl font-semibold tracking-[-0.035em]">Who are the courses for?</h2>
+                <div className="mt-6 grid gap-4 sm:grid-cols-2">
                   {students.map((student, index) => (
                     <label key={index} className="text-xs font-bold text-[#315a58]">Learner {index + 1} name
                       <input required maxLength={200} value={student.name} onChange={(event) => updateStudent(index, { name: event.target.value })} className="mt-2 block w-full rounded-xl border border-[#cbdad4] bg-white px-4 py-3 text-sm font-normal text-[#173c3d] outline-none transition placeholder:text-[#9aa9a4] focus:border-[#315a58] focus:ring-2 focus:ring-[#d5e77d]" placeholder="Learner’s name" />
@@ -221,12 +255,6 @@ export default function CheckoutPage({ apiOrigin }: CheckoutPageProps) {
                       </select>
                     </label>
                   ))}
-                  <label className="text-xs font-bold text-[#315a58]">Email address
-                    <input required type="email" maxLength={320} autoComplete="email" value={parentEmail} onChange={(event) => setParentEmail(event.target.value)} className="mt-2 block w-full rounded-xl border border-[#cbdad4] bg-white px-4 py-3 text-sm font-normal text-[#173c3d] outline-none transition placeholder:text-[#9aa9a4] focus:border-[#315a58] focus:ring-2 focus:ring-[#d5e77d]" placeholder="you@example.com" />
-                  </label>
-                  <label className="text-xs font-bold text-[#315a58]">Confirm email address
-                    <input required type="email" maxLength={320} autoComplete="email" value={emailConfirm} onChange={(event) => setEmailConfirm(event.target.value)} className="mt-2 block w-full rounded-xl border border-[#cbdad4] bg-white px-4 py-3 text-sm font-normal text-[#173c3d] outline-none transition placeholder:text-[#9aa9a4] focus:border-[#315a58] focus:ring-2 focus:ring-[#d5e77d]" placeholder="Type it again" />
-                  </label>
                 </div>
               </section>
             </div>
@@ -241,9 +269,50 @@ export default function CheckoutPage({ apiOrigin }: CheckoutPageProps) {
               <div className="flex items-end justify-between gap-2"><span className="text-sm font-semibold">Total</span><span className="font-display text-3xl font-semibold tracking-[-0.04em]">{formatPrice(totalMinor, currency)}</span></div>
               <p className="mt-3 text-xs leading-5 text-[#526a69]">A one-time simulated purchase. No payment details are collected and no charge is made.</p>
               {error && <p role="alert" className="mt-4 rounded-xl border border-[#c75e3c]/30 bg-[#fff2e9] p-3 text-sm leading-5 text-[#793a28]">{error}</p>}
-              <button type="submit" disabled={submitting || loading || courses.length === 0} className="mt-6 w-full rounded-full bg-[#173c3d] px-5 py-4 text-sm font-bold text-white shadow-sm transition hover:bg-[#245657] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#a84e2c]">{submitting ? 'Confirming…' : 'Complete mock purchase'}</button>
-              <p className="mt-3 text-center text-[11px] text-[#718783]">Invitation links appear after confirmation</p>
+              <button type="submit" disabled={submitting || loading || courses.length === 0} className="mt-6 w-full rounded-full bg-[#173c3d] px-5 py-4 text-sm font-bold text-white shadow-sm transition hover:bg-[#245657] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#a84e2c]">Continue to payment</button>
+              <p className="mt-3 text-center text-[11px] text-[#718783]">You’ll review your payment choice before confirming.</p>
             </aside>
+              </div>
+            ) : (
+              <section className="mx-auto max-w-3xl rounded-[1.75rem] border border-[#cbdad4] bg-[#fffefa] p-5 shadow-[0_24px_70px_-50px_#173c3d] sm:p-9">
+                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#527775]">Payment · simulated</p>
+                <h2 className="mt-2 font-display text-3xl font-semibold tracking-[-0.04em]">Choose a payment method</h2>
+                <p className="mt-3 max-w-xl text-sm leading-6 text-[#526a69]">Select a mock method to see the payment step. No real payment will be taken, and no card details are collected.</p>
+                <div className="mt-7 flex flex-wrap items-center justify-between gap-4 rounded-2xl bg-[#edf3f1] p-5">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-[0.14em] text-[#527775]">Parent or guardian</p>
+                    <p className="mt-1 font-semibold">{parentEmail.trim()}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs font-bold uppercase tracking-[0.14em] text-[#527775]">Amount due</p>
+                    <p className="mt-1 font-display text-2xl font-semibold">{formatPrice(totalMinor, currency)}</p>
+                  </div>
+                </div>
+                <fieldset className="mt-7">
+                  <legend className="text-sm font-bold">Payment method</legend>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                    {([
+                      { value: 'visa', label: 'Visa', mark: 'VISA' },
+                      { value: 'mastercard', label: 'Mastercard', mark: 'mastercard' },
+                      { value: 'apple_pay', label: 'Apple Pay', mark: 'Pay' },
+                    ] as const).map((method) => (
+                      <label key={method.value} className={`flex min-h-24 cursor-pointer items-center gap-3 rounded-2xl border p-4 transition has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[#a84e2c] ${paymentMethod === method.value ? 'border-[#173c3d] bg-[#e9f0ec]' : 'border-[#dce5e1] bg-white hover:border-[#8ca8a2]'}`}>
+                        <input aria-label={method.label} className="h-4 w-4 accent-[#173c3d]" type="radio" name="paymentMethod" value={method.value} checked={paymentMethod === method.value} onChange={() => setPaymentMethod(method.value)} />
+                        <span className="flex flex-col gap-1">
+                          <span className="font-bold">{method.mark}</span>
+                          <span className="text-xs text-[#526a69]">{method.label} · mock</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+                {error && <p role="alert" className="mt-5 rounded-xl border border-[#c75e3c]/30 bg-[#fff2e9] p-3 text-sm leading-5 text-[#793a28]">{error}</p>}
+                <div className="mt-8 flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
+                  <button type="button" onClick={() => { setError(''); setStep('details') }} className="rounded-full border border-[#9db3ac] px-5 py-3 text-sm font-bold text-[#315a58] transition hover:bg-[#edf3f1] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#a84e2c]">Back to details</button>
+                  <button type="submit" disabled={submitting} className="rounded-full bg-[#173c3d] px-6 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#245657] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#a84e2c]">{submitting ? 'Processing mock payment…' : 'Pay now'}</button>
+                </div>
+              </section>
+            )}
           </form>
         )}
         <footer className="flex flex-wrap items-center justify-between gap-3 px-2 py-8 text-xs text-[#718783]">
@@ -255,14 +324,65 @@ export default function CheckoutPage({ apiOrigin }: CheckoutPageProps) {
   )
 }
 
-function BrandHeader() {
+function BrandHeader({ apiOrigin }: { apiOrigin: string }) {
+  const [sessionStatus, setSessionStatus] = useState<'checking' | 'signed-out' | 'signed-in' | 'error'>('checking')
+  const [sessionError, setSessionError] = useState('')
+  const checkingRef = useRef(false)
+  const initialSessionCheckRef = useRef<ReturnType<typeof getCurrentStudent> | null>(null)
+
+  useEffect(() => {
+    let isCurrent = true
+    const initialSessionCheck = initialSessionCheckRef.current ??= getCurrentStudent(apiOrigin)
+
+    void initialSessionCheck.then((student) => {
+      if (!isCurrent) return
+      setSessionStatus(student ? 'signed-in' : 'signed-out')
+    }).catch((cause: unknown) => {
+      if (!isCurrent) return
+      setSessionStatus('error')
+      setSessionError(cause instanceof Error ? cause.message : 'We couldn’t check your sign-in. Try again shortly.')
+    })
+
+    return () => { isCurrent = false }
+  }, [apiOrigin])
+
+  async function handleLearnerLogin(event: MouseEvent<HTMLAnchorElement>) {
+    event.preventDefault()
+    if (checkingRef.current || sessionStatus === 'checking') return
+
+    checkingRef.current = true
+    setSessionStatus('checking')
+    setSessionError('')
+    try {
+      const student = await getCurrentStudent(apiOrigin, fetch, { forceServerCheck: true })
+      window.location.assign(student ? '/dashboard' : '/login')
+    } catch (cause) {
+      setSessionStatus('error')
+      setSessionError(cause instanceof Error ? cause.message : 'We couldn’t check your sign-in. Try again shortly.')
+    } finally {
+      checkingRef.current = false
+    }
+  }
+
   return (
-    <header className="flex items-center justify-between gap-4 px-1">
-      <a href="/" className="flex items-center gap-3 text-[#173c3d] no-underline">
-        <span className="grid h-10 w-10 place-items-center rounded-[0.85rem] bg-[#d5e77d] font-display text-lg font-black tracking-[-0.08em]">m.</span>
-        <span className="font-display text-sm font-bold tracking-[-0.02em]">MES Learning</span>
-      </a>
-      <span className="rounded-full border border-[#bdcec7] px-3 py-2 text-[10px] font-bold uppercase tracking-[0.14em] text-[#527775] sm:px-4 sm:text-[11px]">For curious minds</span>
-    </header>
+    <>
+      <header className="flex items-center justify-between gap-4 px-1">
+        <a href="/" className="flex items-center gap-3 text-[#173c3d] no-underline">
+          <span className="grid h-10 w-10 place-items-center rounded-[0.85rem] bg-[#d5e77d] font-display text-lg font-black tracking-[-0.08em]">m.</span>
+          <span className="font-display text-sm font-bold tracking-[-0.02em]">MES Learning</span>
+        </a>
+        <span className="hidden rounded-full border border-[#bdcec7] px-3 py-2 text-[10px] font-bold uppercase tracking-[0.14em] text-[#527775] sm:inline-flex sm:px-4 sm:text-[11px]">For curious minds</span>
+        <a
+          href={sessionStatus === 'signed-in' ? '/dashboard' : '/login'}
+          aria-disabled={sessionStatus === 'checking'}
+          aria-busy={sessionStatus === 'checking'}
+          onClick={handleLearnerLogin}
+          className="rounded-full border border-[#173c3d] bg-[#e2ebe6] px-4 py-2 text-xs font-bold text-[#173c3d] transition hover:bg-[#d5e77d] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#a84e2c]"
+        >
+          {sessionStatus === 'checking' ? 'Checking…' : sessionStatus === 'signed-in' ? 'Dashboard' : 'Sign in'}
+        </a>
+      </header>
+      {sessionError && <p role="alert" className="mt-4 rounded-xl border border-[#c75e3c]/30 bg-[#fff2e9] p-3 text-sm leading-5 text-[#793a28]">{sessionError} Select “Sign in” to try again.</p>}
+    </>
   )
 }

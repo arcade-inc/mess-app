@@ -29,7 +29,7 @@ test('checkout idempotency validates before claiming keys and handles replay, co
   fixture.trackCourse(course.id)
   const body = () => {
     const email = `idempotency-${randomUUID()}@example.com`
-    return { parent: { name: 'Test Parent', email, emailConfirm: email }, students: [{ name: 'Test Student', year: course.year_min, courseIds: [course.id] }] }
+    return { parent: { name: 'Test Parent', email, emailConfirm: email }, students: [{ name: 'Test Student', year: course.year_min, courseIds: [course.id] }], paymentMethod: 'visa' }
   }
   const send = (key: string, payload: unknown) => app.inject({ method: 'POST', url: '/checkout', headers: { 'idempotency-key': key }, payload })
 

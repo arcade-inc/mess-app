@@ -2,6 +2,26 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { getCourseLessons, getLesson, getMyEnrollments } from '../src/api/learning.js'
 
+async function withAuthHint<T>(run: () => Promise<T>): Promise<T> {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+  const values = new Map<string, string>([['mes.authenticated', 'true']])
+  const storage: Storage = {
+    get length() { return values.size },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => [...values.keys()][index] ?? null,
+    removeItem: (key) => { values.delete(key) },
+    setItem: (key, value) => { values.set(key, String(value)) },
+  }
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage })
+  try {
+    return await run()
+  } finally {
+    if (original) Object.defineProperty(globalThis, 'localStorage', original)
+    else Reflect.deleteProperty(globalThis, 'localStorage')
+  }
+}
+
 test('learning reads send cookie credentials and use server-owned identity routes', async () => {
   const urls: string[] = []
   const fetcher = (async (input, init) => {
@@ -28,3 +48,13 @@ test('learning reads send cookie credentials and use server-owned identity route
     'https://api.example/api/lessons/lesson-1',
   ])
 })
+
+test('clears the stored auth hint when a protected learning API returns 401', async () => withAuthHint(async () => {
+  await assert.rejects(
+    getMyEnrollments('https://api.example', (async () => Response.json(
+      { error: { message: 'Authentication is required' } },
+      { status: 401 },
+    )) as typeof fetch),
+  )
+  assert.equal(localStorage.getItem('mes.authenticated'), null)
+}))

@@ -33,6 +33,7 @@ test('checkout invitations have high entropy, persist only token hashes, expire 
     payload: {
       parent: { name: 'Test Parent', email, emailConfirm: email },
       students: [{ name: 'Test Student', year: course.year_min, courseIds: [course.id] }],
+      paymentMethod: 'visa',
     },
   })
   assert.equal(response.statusCode, 201)

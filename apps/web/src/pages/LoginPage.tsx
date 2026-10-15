@@ -7,7 +7,16 @@ interface LoginPageProps {
   apiOrigin: string
 }
 
+function getInvitationReturnPath(): string | null {
+  const params = new URLSearchParams(window.location.search)
+  const activationCode = params.get('activationCode')
+  if (!activationCode || !/^[A-Za-z0-9_-]+$/.test(activationCode)) return null
+
+  return `/invite/${encodeURIComponent(activationCode)}`
+}
+
 export default function LoginPage({ apiOrigin }: LoginPageProps) {
+  const returnPath = getInvitationReturnPath()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [student, setStudent] = useState<StudentSummary | null>(null)
@@ -18,19 +27,25 @@ export default function LoginPage({ apiOrigin }: LoginPageProps) {
   useEffect(() => {
     let active = true
     readSession(apiOrigin)
-      .then((current) => { if (active) setStudent(current) })
+      .then((current) => {
+        if (!active) return
+        setStudent(current)
+        if (current && returnPath) window.location.replace(returnPath)
+      })
       .catch(() => { if (active) setError('We couldn’t check your sign-in. Try again shortly.') })
       .finally(() => { if (active) setCheckingSession(false) })
     return () => { active = false }
-  }, [apiOrigin])
+  }, [apiOrigin, returnPath])
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError('')
     setSubmitting(true)
     try {
-      setStudent(await login(apiOrigin, { email: email.trim(), password }))
+      const current = await login(apiOrigin, { email: email.trim(), password })
+      setStudent(current)
       setPassword('')
+      if (returnPath) window.location.assign(returnPath)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'We couldn’t sign you in.')
     } finally {

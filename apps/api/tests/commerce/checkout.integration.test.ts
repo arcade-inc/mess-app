@@ -35,6 +35,7 @@ test('checkout uses database prices, validates year eligibility, and rolls back 
     return {
       parent: { name: 'Test Parent', email, emailConfirm: email },
       students: [{ name: 'Test Student', year: course.year_min, courseIds: [course.id] }],
+      paymentMethod: 'visa',
       ...overrides,
     }
   }
@@ -54,6 +55,29 @@ test('checkout uses database prices, validates year eligibility, and rolls back 
   assert.equal(receipt.status, 'PAID')
   assert.equal(receipt.totalMinor, course.price_minor)
   assert.equal(receipt.invitations.length, 1)
+  const paymentMethod = await pool.query<{ provider: string }>(
+    'SELECT provider FROM payments WHERE order_id = $1', [receipt.orderId],
+  )
+  assert.equal(paymentMethod.rows[0]?.provider, 'mock_visa')
+
+  const changedMethod = await app.inject({
+    method: 'POST',
+    url: '/checkout',
+    headers: { 'idempotency-key': successKey },
+    payload: { ...validRequest, paymentMethod: 'mastercard' },
+  })
+  assert.equal(changedMethod.statusCode, 422, 'a different mock method changes the checkout request identity')
+
+  const unsupportedKey = `unsupported-method-${randomUUID()}`
+  const unsupportedRequest = makeRequest({ paymentMethod: 'paypal' })
+  fixture.trackOrder(unsupportedKey, (unsupportedRequest as { parent: { email: string } }).parent.email)
+  const unsupportedMethod = await app.inject({
+    method: 'POST',
+    url: '/checkout',
+    headers: { 'idempotency-key': unsupportedKey },
+    payload: unsupportedRequest,
+  })
+  assert.equal(unsupportedMethod.statusCode, 400, 'unsupported mock methods are rejected before order creation')
   const confirmation = await pool.query<{ id: string; message_type: string; payload: { orderId: string }; status: string }>(
     "SELECT id, message_type, payload, status FROM outbox_messages WHERE dedupe_key = $1",
     [`purchase-confirmation:${receipt.orderId}`],

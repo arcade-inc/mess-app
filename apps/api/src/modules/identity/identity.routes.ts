@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { Pool } from 'pg'
 import { getStudentIdFromRequest, issueStudentSession, clearStudentSession } from './session.js'
-import { authenticateStudent, getStudentProfile, redeemInvitation } from './onboarding.service.js'
+import { authenticateStudent, claimInvitationForStudent, getStudentProfile, redeemInvitation } from './onboarding.service.js'
 import { getInvitation } from './invitation.service.js'
 import type { AppConfig } from '../../platform/config.js'
 import type { Telemetry } from '../../platform/telemetry.js'
@@ -24,6 +24,19 @@ export function registerIdentityRoutes(app: FastifyInstance, { database, config,
       issueStudentSession(app, reply, student.id, config)
       telemetry.recordBusinessEvent('invitation.redeemed')
       return reply.code(200).send({ student })
+    } catch (error) {
+      telemetry.recordBusinessEvent('activation.failed')
+      throw error
+    }
+  })
+
+  app.post<{ Params: { token: string } }>('/invitations/:token/claim', async (request) => {
+    const studentId = getStudentIdFromRequest(request)
+    if (!studentId) throw new AppError('Authentication is required', 401, 'UNAUTHORIZED')
+    try {
+      const student = await claimInvitationForStudent(database, request.params.token, studentId)
+      telemetry.recordBusinessEvent('invitation.claimed')
+      return student
     } catch (error) {
       telemetry.recordBusinessEvent('activation.failed')
       throw error

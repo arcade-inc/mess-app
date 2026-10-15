@@ -49,12 +49,14 @@ test('emits HTTP and business metrics without sensitive request attributes', asy
   app.get('/test/lesson', async () => ({ ok: true }))
   await app.inject({ method: 'GET', url: '/test/lesson', headers: { 'x-student-email': 'student@example.com' } })
   telemetry.recordBusinessEvent('order.created')
+  telemetry.recordBusinessEvent('invitation.claimed')
   await provider.forceFlush()
 
   const exported = JSON.stringify(exporter.getMetrics())
   assert.match(exported, /http\.server\.request\.count/)
   assert.match(exported, /http\.server\.request\.duration/)
   assert.match(exported, /business\.order\.created/)
+  assert.match(exported, /business\.invitation\.claimed/)
   assert.doesNotMatch(exported, /student@example\.com|x-student-email/)
 })
 

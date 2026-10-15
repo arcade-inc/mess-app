@@ -1,3 +1,5 @@
+import { fetchApi } from './auth-state.js'
+
 export interface CourseSummary {
   id: string
   subject: string
@@ -33,16 +35,16 @@ async function readJson<T>(response: Response): Promise<T> {
 }
 
 export async function getMyEnrollments(apiOrigin: string, fetcher: typeof fetch = fetch): Promise<EnrollmentSummary[]> {
-  const response = await fetcher(new URL('/api/me/enrollments', apiOrigin), { credentials: 'include' })
+  const response = await fetchApi(new URL('/api/me/enrollments', apiOrigin), { credentials: 'include' }, fetcher)
   return (await readJson<{ enrollments: EnrollmentSummary[] }>(response)).enrollments
 }
 
 export async function getCourseLessons(apiOrigin: string, courseId: string, fetcher: typeof fetch = fetch): Promise<LessonSummary[]> {
-  const response = await fetcher(new URL(`/api/courses/${encodeURIComponent(courseId)}/lessons`, apiOrigin), { credentials: 'include' })
+  const response = await fetchApi(new URL(`/api/courses/${encodeURIComponent(courseId)}/lessons`, apiOrigin), { credentials: 'include' }, fetcher)
   return (await readJson<{ lessons: LessonSummary[] }>(response)).lessons
 }
 
 export async function getLesson(apiOrigin: string, lessonId: string, fetcher: typeof fetch = fetch): Promise<Lesson> {
-  const response = await fetcher(new URL(`/api/lessons/${encodeURIComponent(lessonId)}`, apiOrigin), { credentials: 'include' })
+  const response = await fetchApi(new URL(`/api/lessons/${encodeURIComponent(lessonId)}`, apiOrigin), { credentials: 'include' }, fetcher)
   return readJson<Lesson>(response)
 }

@@ -15,6 +15,7 @@ export type BusinessEvent =
   | 'order.paid'
   | 'invitation.issued'
   | 'invitation.redeemed'
+  | 'invitation.claimed'
   | 'activation.failed'
   | 'lesson_access.denied'
 
@@ -28,6 +29,7 @@ const businessMetricNames: Record<BusinessEvent, string> = {
   'order.paid': 'business.order.paid',
   'invitation.issued': 'business.invitation.issued',
   'invitation.redeemed': 'business.invitation.redeemed',
+  'invitation.claimed': 'business.invitation.claimed',
   'activation.failed': 'business.activation.failed',
   'lesson_access.denied': 'business.lesson_access.denied',
 }

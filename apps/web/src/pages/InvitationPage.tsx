@@ -1,6 +1,6 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { trace } from '@opentelemetry/api'
-import { getInvitation, IdentityApiError, redeemInvitation, type InvitationPreview } from '../api/identity.js'
+import { claimInvitation, getCurrentStudent, getInvitation, IdentityApiError, redeemInvitation, type InvitationClaimResult, type InvitationPreview } from '../api/identity.js'
 import IdentityHeader from '../components/IdentityHeader.js'
 
 interface InvitationPageProps {
@@ -17,16 +17,50 @@ export default function InvitationPage({ apiOrigin, token }: InvitationPageProps
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [activated, setActivated] = useState(false)
+  const [claiming, setClaiming] = useState(false)
+  const [claimOutcome, setClaimOutcome] = useState<InvitationClaimResult | null>(null)
   const [accountExists, setAccountExists] = useState(false)
+  const claimRequest = useRef<{ token: string; promise: Promise<Awaited<ReturnType<typeof claimInvitation>>> } | null>(null)
+  const signInHref = `/login?${new URLSearchParams({ activationCode: token })}`
 
   useEffect(() => {
     let active = true
-    getInvitation(apiOrigin, token)
-      .then((result) => { if (active) setInvitation(result) })
-      .catch((cause: unknown) => { if (active) setError(cause instanceof Error ? cause.message : 'This invitation is unavailable.') })
-      .finally(() => { if (active) setLoading(false) })
+    void (async () => {
+      try {
+        const result = await getInvitation(apiOrigin, token)
+        if (active) setInvitation(result)
+
+        const student = await getCurrentStudent(apiOrigin)
+        if (student) {
+          if (active) setClaiming(true)
+          try {
+            if (claimRequest.current?.token !== token) {
+              claimRequest.current = { token, promise: claimInvitation(apiOrigin, token) }
+            }
+            const result = await claimRequest.current.promise
+            if (active) {
+              if (result.declinedCourses.length > 0) setClaimOutcome(result)
+              else window.location.replace('/dashboard')
+            }
+          } catch (cause) {
+            if (!active) return
+            if (cause instanceof IdentityApiError && cause.statusCode === 401) {
+              window.location.replace(signInHref)
+              return
+            }
+            setError(cause instanceof Error ? cause.message : 'The course could not be added to your account.')
+          } finally {
+            if (active) setClaiming(false)
+          }
+        }
+      } catch (cause: unknown) {
+        if (active) setError(cause instanceof Error ? cause.message : 'This invitation is unavailable.')
+      } finally {
+        if (active) setLoading(false)
+      }
+    })()
     return () => { active = false }
-  }, [apiOrigin, token])
+  }, [apiOrigin, signInHref, token])
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -78,6 +112,23 @@ export default function InvitationPage({ apiOrigin, token }: InvitationPageProps
                 <p className="mt-4 text-sm leading-6 text-[#526a69]">Your account is active and your purchased courses are connected. You’re signed in on this device.</p>
                 <a href="/dashboard" className="mt-8 inline-flex rounded-full bg-[#173c3d] px-6 py-3.5 text-sm font-bold text-white transition hover:bg-[#245657] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#a84e2c]">Continue to learning</a>
               </div>
+            ) : claiming ? (
+              <p aria-live="polite" className="py-16 text-center text-sm text-[#526a69]">Adding this course to your account…</p>
+            ) : claimOutcome ? (
+              <div role="alert" className="py-8">
+                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#a84e2c]">Some courses weren’t added</p>
+                <h2 className="mt-3 font-display text-3xl font-semibold tracking-[-0.04em]">You already have access to these courses.</h2>
+                {invitation && invitation.courses.some((course) => !claimOutcome.declinedCourses.some((declined) => declined.id === course.id)) && (
+                  <p className="mt-4 text-sm leading-6 text-[#526a69]">The other courses in this invitation have been added to your account.</p>
+                )}
+                <ul className="mt-4 list-disc space-y-2 pl-5 text-sm leading-6 text-[#793a28]">
+                  {claimOutcome.declinedCourses.map((course) => (
+                    <li key={course.id}><strong>{course.subject}</strong> wasn’t added because it’s already on this learner’s account.</li>
+                  ))}
+                </ul>
+                <p className="mt-4 text-sm leading-6 text-[#526a69]">If this purchase was a mistake, please contact technical support for help.</p>
+                <a href="/dashboard" className="mt-7 inline-flex rounded-full bg-[#173c3d] px-6 py-3.5 text-sm font-bold text-white">Continue to learning</a>
+              </div>
             ) : invitation ? (
               <>
                 <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#527775]">Make it yours</p>
@@ -97,10 +148,10 @@ export default function InvitationPage({ apiOrigin, token }: InvitationPageProps
                   <label className="block text-xs font-bold text-[#315a58]">Type the password again
                     <input required type="password" minLength={12} maxLength={128} autoComplete="new-password" value={passwordConfirm} onChange={(event) => setPasswordConfirm(event.target.value)} className="identity-input" />
                   </label>
-                  {error && <div role="alert" className="rounded-xl border border-[#c75e3c]/30 bg-[#fff2e9] p-3 text-sm leading-5 text-[#793a28]">{error}{accountExists && <> <a className="font-bold underline underline-offset-2" href="/login">Sign in instead.</a></>}</div>}
+                  {error && <div role="alert" className="rounded-xl border border-[#c75e3c]/30 bg-[#fff2e9] p-3 text-sm leading-5 text-[#793a28]">{error}{accountExists && <> <a className="font-bold underline underline-offset-2" href={signInHref}>Sign in instead.</a></>}</div>}
                   <button type="submit" disabled={submitting} className="w-full rounded-full bg-[#173c3d] px-5 py-4 text-sm font-bold text-white transition hover:bg-[#245657] disabled:cursor-wait disabled:opacity-55 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#a84e2c]">{submitting ? 'Setting up your account…' : 'Activate my account'}</button>
                 </form>
-                <p className="mt-5 text-center text-xs text-[#718783]">Already have an account? <a href="/login" className="font-bold text-[#315a58] underline underline-offset-2">Sign in</a></p>
+                <p className="mt-5 text-center text-xs text-[#718783]">Already have an account? <a href={signInHref} className="font-bold text-[#315a58] underline underline-offset-2">Sign in</a></p>
               </>
             ) : (
               <div role="alert" className="py-10">

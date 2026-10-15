@@ -33,6 +33,7 @@ test('login rejects invalid credentials without disclosing them and logout clear
     payload: {
       parent: { name: 'Parent', email: parentEmail, emailConfirm: parentEmail },
       students: [{ name: 'Session Learner', year: course.year_min, courseIds: [course.id] }],
+      paymentMethod: 'visa',
     },
   })
   const invitation = checkout.json<{ invitations: Array<{ url: string }> }>().invitations[0]?.url

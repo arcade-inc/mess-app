@@ -90,6 +90,7 @@ test('routes catalog browsing to read pool and checkout, activation, and entitle
   const checkoutPayload = {
     parent: { name: 'Routing Parent', email: parentEmail, emailConfirm: parentEmail },
     students: [{ name: 'Routing Student', year: course.yearMin, courseIds: [course.id] }],
+    paymentMethod: 'visa',
   }
 
   observed.length = 0

@@ -5,7 +5,7 @@ import { AppError } from '../../platform/errors.js'
 import { withTransaction } from '../../platform/database.js'
 import { getEligibleCourses } from '../catalog/catalog.service.js'
 import { hashCheckoutRequest, validateIdempotencyKey } from './idempotency.js'
-import type { PaymentGateway } from './payment-gateway.js'
+import type { MockPaymentMethod, PaymentGateway } from './payment-gateway.js'
 import { createInvitationToken, hashInvitationToken, INVITATION_LIFETIME_DAYS, INVITATION_REMINDER_DELAY_DAYS } from '../identity/invitation.service.js'
 import { enqueueOutboxMessage } from '../../worker/outbox.repository.js'
 import { currentOutboxTraceContext } from '../../worker/outbox.worker.js'
@@ -24,11 +24,13 @@ const checkoutSchema = z.object({
     year: z.number().int().min(5).max(13),
     courseIds: z.array(z.string().uuid()).min(1),
   })).min(1).max(10),
+  paymentMethod: z.enum(['visa', 'mastercard', 'apple_pay']),
 })
 
 export interface CheckoutRequest {
   parent: { name: string; email: string; emailConfirm: string }
   students: Array<{ name: string; year: number; courseIds: string[] }>
+  paymentMethod: MockPaymentMethod
 }
 
 export interface CheckoutReceipt {
@@ -188,7 +190,12 @@ export function createCheckoutService({ primary, paymentGateway, webOrigin }: Ch
       // Keep payment processing outside the DB transaction; replace this adapter for any future external provider.
       let payment
       try {
-        payment = await paymentGateway.charge({ orderId: pending.orderId, amountMinor: pending.totalMinor, currency: pending.currency })
+        payment = await paymentGateway.charge({
+          orderId: pending.orderId,
+          amountMinor: pending.totalMinor,
+          currency: pending.currency,
+          paymentMethod: pending.input.paymentMethod,
+        })
       } catch {
         await withTransaction(primary, async (client) => {
           await client.query("UPDATE orders SET status = 'FAILED' WHERE id = $1", [pending.orderId])

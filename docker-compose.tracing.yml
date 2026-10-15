@@ -1,0 +1,14 @@
+# Optional local test profile for collecting an end-to-end trace in apps/web/tests.
+# The receiver is hosted by the Playwright process on the host, not added as a service.
+services:
+  api:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4318
+    extra_hosts:
+      - host.docker.internal:host-gateway
+
+  web:
+    image: mess-app-web-tracing
+    build:
+      args:
+        VITE_OTEL_EXPORTER_OTLP_ENDPOINT: http://localhost:4318

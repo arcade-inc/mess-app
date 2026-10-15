@@ -10,9 +10,10 @@ test('validates idempotency keys from one through 255 characters', () => {
 })
 
 test('hashes equivalent JSON objects canonically and distinguishes changed checkout details', () => {
-  const first = { parent: { name: 'A', email: 'a@example.com' }, students: [{ year: 8, courseIds: ['course-1'] }] }
-  const reordered = { students: [{ courseIds: ['course-1'], year: 8 }], parent: { email: 'a@example.com', name: 'A' } }
+  const first = { parent: { name: 'A', email: 'a@example.com' }, students: [{ year: 8, courseIds: ['course-1'] }], paymentMethod: 'visa' }
+  const reordered = { students: [{ courseIds: ['course-1'], year: 8 }], parent: { email: 'a@example.com', name: 'A' }, paymentMethod: 'visa' }
   const changed = { ...first, students: [{ year: 9, courseIds: ['course-1'] }] }
   assert.equal(hashCheckoutRequest(first), hashCheckoutRequest(reordered))
   assert.notEqual(hashCheckoutRequest(first), hashCheckoutRequest(changed))
+  assert.notEqual(hashCheckoutRequest(first), hashCheckoutRequest({ ...first, paymentMethod: 'mastercard' }))
 })

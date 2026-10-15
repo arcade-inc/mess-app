@@ -1,3 +1,5 @@
+import { fetchApi } from './auth-state.js'
+
 export interface CatalogCourse {
   id: string
   subject: string
@@ -13,9 +15,12 @@ export interface CheckoutStudentInput {
   courseIds: string[]
 }
 
+export type MockPaymentMethod = 'visa' | 'mastercard' | 'apple_pay'
+
 export interface CheckoutPayload {
   parent: { name: string; email: string; emailConfirm: string }
   students: CheckoutStudentInput[]
+  paymentMethod: MockPaymentMethod
 }
 
 export interface CheckoutResponse {
@@ -52,7 +57,7 @@ async function readError(response: Response): Promise<Error> {
 }
 
 export async function loadCourses(apiOrigin: string, fetcher: typeof fetch = fetch): Promise<CatalogCourse[]> {
-  const response = await fetcher(new URL('/api/courses', apiOrigin))
+  const response = await fetchApi(new URL('/api/courses', apiOrigin), undefined, fetcher)
   if (!response.ok) throw await readError(response)
   const body = await response.json() as { courses: CatalogCourse[] }
   return body.courses
@@ -68,11 +73,11 @@ export async function submitCheckout(
   idempotencyKey: string,
   fetcher: typeof fetch = fetch,
 ): Promise<CheckoutResponse> {
-  const response = await fetcher(new URL('/api/checkout', apiOrigin), {
+  const response = await fetchApi(new URL('/api/checkout', apiOrigin), {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey },
     body: JSON.stringify(payload),
-  })
+  }, fetcher)
   if (!response.ok) throw await readError(response)
   return await response.json() as CheckoutResponse
 }

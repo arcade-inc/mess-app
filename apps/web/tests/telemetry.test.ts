@@ -10,7 +10,7 @@ test('propagates trace context only to explicitly configured API origins', () =>
 })
 
 test('redacts invitation tokens from browser telemetry URLs while preserving origin and route', () => {
-  const sanitized = redactTelemetryUrl('https://web.example/api/invitations/secret-token?password=secret')
+  const sanitized = redactTelemetryUrl('https://web.example/api/invitations/secret-token?activationCode=secret-token&password=secret')
   assert.equal(sanitized, 'https://web.example/api/invitations/:token')
-  assert.doesNotMatch(sanitized, /secret|password/i)
+  assert.doesNotMatch(sanitized, /secret|password|activationCode/i)
 })

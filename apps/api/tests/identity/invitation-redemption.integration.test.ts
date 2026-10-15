@@ -38,6 +38,7 @@ test('invitation redemption validates state, prevents duplicate accounts, hashes
       payload: {
         parent: { name: 'Test Parent', email, emailConfirm: email },
         students: [{ name: 'Learner One', year: course.year_min, courseIds: courses.map((item) => item.id) }],
+        paymentMethod: 'visa',
       },
     })
     assert.equal(checkout.statusCode, 201)

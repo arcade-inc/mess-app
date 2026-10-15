@@ -56,6 +56,76 @@ export async function redeemInvitation(pool: Pool, token: string, rawInput: unkn
   }
 }
 
+function normalizeLearnerName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+export async function claimInvitationForStudent(
+  pool: Pool,
+  token: string,
+  studentId: string,
+): Promise<{ student: StudentProfile; declinedCourses: Array<{ id: string; subject: string }> }> {
+  return withTransaction(pool, async (client) => {
+    const invitation = await lockInvitationForRedemption(client, hashInvitationToken(token))
+    if (!invitation) throw new AppError('Invitation is unavailable', 404, 'NOT_FOUND')
+
+    const accountResult = await client.query<{ id: string; name: string }>(
+      'SELECT id, name FROM students WHERE id = $1 FOR UPDATE',
+      [studentId],
+    )
+    const account = accountResult.rows[0]
+    if (!account) throw new AppError('Authentication is required', 401, 'UNAUTHORIZED')
+    if (normalizeLearnerName(invitation.studentName) !== normalizeLearnerName(account.name)) {
+      throw new AppError('This course belongs to another learner.', 409, 'INVITATION_LEARNER_MISMATCH')
+    }
+
+    const activeCourses = await client.query<{ id: string; subject: string }>(
+      `SELECT DISTINCT course.id, course.subject
+         FROM enrollments enrollment
+         JOIN courses course ON course.id = enrollment.course_id
+        WHERE enrollment.student_id = $1
+          AND enrollment.status = 'ACTIVE'
+          AND enrollment.course_id = ANY($2::uuid[])
+        ORDER BY course.subject`,
+      [studentId, invitation.courses.map((course) => course.id)],
+    )
+    const declinedCourses = activeCourses.rows
+    const declinedCourseIds = declinedCourses.map((course) => course.id)
+
+    if (!await claimInvitation(client, invitation.id)) throw new AppError('Invitation is unavailable', 404, 'NOT_FOUND')
+
+    const linked = await client.query(
+      'UPDATE student_slots SET student_id = $1 WHERE id = $2 AND student_id IS NULL',
+      [studentId, invitation.slotId],
+    )
+    if (linked.rowCount !== 1) throw new AppError('Invitation is unavailable', 404, 'NOT_FOUND')
+
+    const declined = await client.query(
+      `UPDATE enrollments
+          SET status = 'REVOKED', student_id = $1
+        WHERE slot_id = $2 AND status = 'PENDING' AND course_id = ANY($3::uuid[])`,
+      [studentId, invitation.slotId, declinedCourseIds],
+    )
+    const activated = await client.query(
+      `UPDATE enrollments
+          SET status = 'ACTIVE', student_id = $1, activated_at = now()
+        WHERE slot_id = $2 AND status = 'PENDING' AND NOT (course_id = ANY($3::uuid[]))`,
+      [studentId, invitation.slotId, declinedCourseIds],
+    )
+    if ((activated.rowCount ?? 0) + (declined.rowCount ?? 0) !== invitation.courses.length) {
+      throw new AppError('Purchased access could not be activated', 409, 'ACTIVATION_CONFLICT')
+    }
+
+    const profile = await client.query<StudentProfile>(
+      'SELECT id, name, email, year FROM students WHERE id = $1',
+      [studentId],
+    )
+    const student = profile.rows[0]
+    if (!student) throw new AppError('Authentication is required', 401, 'UNAUTHORIZED')
+    return { student, declinedCourses }
+  })
+}
+
 const loginSchema = z.object({
   email: z.string().trim().email().max(320).transform((email) => email.toLowerCase()),
   password: z.string().min(1).max(128),
